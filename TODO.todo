@@ -1,0 +1,78 @@
+Base Work:
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/knn.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/teaching/skip_list.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/teaching/nsw.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/hnsw.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/filter.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/examples/multimodal_retrieval/multimodal_retrieval.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/utils.py
+  ☐ https://github.com/jbarrow/tinyhnsw/blob/main/tinyhnsw/visualization.py
+
+mHNSW Work:
+  ☐ Add Bloom Filter (VisitedSet)
+    What it solves: Standard HNSW tracks visited nodes with a 
+    hash set — expensive for large graphs.
+
+    How it works: Uses a PatternedSimdBloomFilter — a SIMD
+    accelerated probabilistic structure that checks 8 nodes at 
+    once (seen(FVectorNode **nodes)). False positives mean 
+    occasionally re-visiting a node, but the speed gain from 
+    SIMD batch queries far outweighs that cost. The filter size 
+    is estimated dynamically using ef_power stats collected 
+    per search.
+    
+  ☐ Add Alpha (Neighbor selection heuristic)
+    What it solves: Standard HNSW's neighbor selection can create 
+    redundant links — neighbors that are close to each other but 
+    not to the target.
+
+    How it works: In select_neighbors, a candidate is discarded if 
+    its distance to any already-accepted neighbor is ≤ 
+    target_distance / alpha. With alpha=1.1, it's slightly more 
+    aggressive than the paper's heuristic — it prunes neighbors 
+    that are within 10% of the target distance, improving graph 
+    diversity and recall.
+
+  ☐ Add Generosity (Dynamic search boundary expansion)
+    What it solves: Standard HNSW stops exploring when candidates 
+    exceed the furthest result found so far. This can cause early 
+    termination and missed results.
+    How it works: generous_furthest() expands the search boundary 
+    beyond the actual furthest best result using a sigmoid 
+    function. The boundary is largest when the current best is 
+    far from half the graph diameter, and shrinks toward normal 
+    as results get closer. generosity = 1.1 + M/500 — so it 
+    scales slightly with graph connectivity.
+
+  ☐ Add Subdist (Sub-distance early exit)
+    What it solves: Full distance computation is expensive. For high
+    dimensional vectors, you can often reject a candidate early.
+
+    How it works: Vectors are split into two parts — the first 
+    subdist_part=192 dimensions and the rest. During search, it 
+    computes distance on just the first 192 dims first. If that 
+    partial distance already exceeds the current threshold 
+    (subdist_margin=1.05f), it skips the full computation entirely.
+    It only kicks in when vec_len >= subdist_part * 2 (384+ dims).
+
+    Stats tracking: It records the ratio subdist/dist across all 
+    calls. If the stddev of that ratio stays below 
+    subdist_stddev_threshold=0.05, the data is "well-behaved" and 
+    subdist is reliable. Otherwise it falls back to full distance.
+
+1-Pass HNSW Search (VF-HNSW):
+  The idea here is to treat HNSW graph as a flat one-level 
+  non-hierarchical graph and search on all layers at once. Without 
+  actual flattening, so let's call it VF-HNSW, Virtually Flattened 
+  Hierarchical Navigable Small World.
+
+  It can be simply described as "when searching on the Nth layer, 
+  instead of adding all node neighbors from the same layer to the 
+  candidate set, add all node neighbors on all layers to the 
+  candidate set". But this of course will cause too many 
+  unnecessary distance calculations, so an optimization would be 
+  "add neighbors from the layer k-1 only if any of the k layer 
+  neighbors was better than all k+1 layer neighbors".
+
+  This will allow searching all layers in one traversal without 
+  overshooting the target.
